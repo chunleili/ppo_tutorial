@@ -41,7 +41,12 @@ def train(env, runner, policy_net, value_net, agent, max_episode=5000):
     if not os.path.exists(save_dir):
         os.mkdir(save_dir)
 
-    writer = SummaryWriter(log_dir=os.path.join(save_dir, "logs"))
+    log_dir = os.path.join(save_dir, "logs")
+    # 清理旧的TensorBoard日志
+    import shutil
+    if os.path.exists(log_dir):
+        shutil.rmtree(log_dir)
+    writer = SummaryWriter(log_dir=log_dir)
 
     for i in range(max_episode):
         #Run and episode to collect data
@@ -60,6 +65,7 @@ def train(env, runner, policy_net, value_net, agent, max_episode=5000):
 
         #Save best model on improved return
         if total_reward > best_return:
+            print("New best return! Saving the best model ... ")
             best_return = total_reward
             torch.save({
                 "it": i,
@@ -93,7 +99,8 @@ def train(env, runner, policy_net, value_net, agent, max_episode=5000):
 
 if __name__ == '__main__':
     #Create the environment
-    env = gym.make('BipedalWalker-v3')
+    max_episode_steps = 1200
+    env = gym.make('BipedalWalker-v3',max_episode_steps=max_episode_steps)
     s_dim = env.observation_space.shape[0]
     a_dim = env.action_space.shape[0]
     print(s_dim)
@@ -105,12 +112,12 @@ if __name__ == '__main__':
     print(policy_net)
     print(value_net)
 
-    #Create the runner
-    runner = EnvRunner(s_dim, a_dim)
+    #Create the runner (time_penalty: 每模拟秒扣除的分数)
+    runner = EnvRunner(s_dim, a_dim, time_penalty=1.0, max_step=max_episode_steps)
 
     #Create a PPO agent for training
     agent = PPO(policy_net, value_net)
 
     #Train the network
-    train(env, runner, policy_net, value_net, agent)
+    train(env, runner, policy_net, value_net, agent, max_episode=2000)
     env.close()

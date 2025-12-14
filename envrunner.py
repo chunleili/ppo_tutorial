@@ -4,13 +4,15 @@ import numpy as np
 #Environment Runner
 class EnvRunner:
     #Constructor
-    def __init__(self, s_dim, a_dim, gamma=0.99, lamb=0.95, max_step=2048, device='cpu'):
+    def __init__(self, s_dim, a_dim, gamma=0.99, lamb=0.95, max_step=2048, device='cpu', time_penalty=0.0):
         self.s_dim = s_dim
         self.a_dim = a_dim
         self.gamma = gamma
         self.lamb = lamb
         self.max_step = max_step
         self.device = device
+        self.time_penalty = time_penalty  # 每模拟秒的时间惩罚
+        self.dt = 1.0 / 50  # BipedalWalker 的时间步长 (秒)
 
         #Storages (state, action, value, reward, a_logp)
         self.mb_states = np.zeros((self.max_step, self.s_dim), dtype=np.float32)
@@ -78,10 +80,22 @@ class EnvRunner:
             else:
                 state, reward, done, info = step_out
 
+            # 应用时间惩罚（每模拟秒扣 time_penalty 分）
+            reward -= self.time_penalty * self.dt
             self.mb_rewards[step] = reward
 
             if done:
                 episode_len = step + 1
+                sim_time = episode_len * self.dt
+                
+                # 摔倒：越快摔倒扣分越多，最多扣200分（2秒内线性递减）
+                if terminated and reward <= -50:
+                    fall_penalty = max(0.0, (2.0 - sim_time) / 2.0 * 200.0)
+                    self.mb_rewards[step] -= fall_penalty
+                # 如果提前完成（<15秒）且不是失败，每提前1秒+5分
+                elif sim_time < 15.0 and terminated:
+                    bonus = (15.0 - sim_time) * 5.0
+                    self.mb_rewards[step] += bonus
                 break
         
         #Compute returns
