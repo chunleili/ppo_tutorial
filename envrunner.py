@@ -52,24 +52,32 @@ class EnvRunner:
     #Run an episode using the policy net & value net
     def run(self, env, policy_net, value_net):
         #Run an episode
-        state = env.reset()   #Initial state
+        reset_out = env.reset()   #Initial state
+        state = reset_out[0] if isinstance(reset_out, tuple) else reset_out
         episode_len = self.max_step
 
         for step in range(self.max_step):
-            state_tensor = torch.tensor(np.expand_dims(state, axis=0), dtype=torch.float32, device=self.device)
+            state_tensor = torch.as_tensor(state, dtype=torch.float32, device=self.device).unsqueeze(0)
             action, a_logp = policy_net(state_tensor)
             value = value_net(state_tensor)
 
             action = action.cpu().numpy()[0]
-            a_logp = a_logp.cpu().numpy()
-            value  = value.cpu().numpy()
+            a_logp = a_logp.cpu().numpy()[0]
+            value  = value.cpu().numpy()[0]
 
             self.mb_states[step] = state
             self.mb_actions[step] = action
             self.mb_a_logps[step] = a_logp
             self.mb_values[step] = value
 
-            state, reward, done, info = env.step(action)
+            step_out = env.step(action)
+
+            if len(step_out) == 5:
+                state, reward, terminated, truncated, info = step_out
+                done = terminated or truncated
+            else:
+                state, reward, done, info = step_out
+
             self.mb_rewards[step] = reward
 
             if done:
@@ -78,8 +86,8 @@ class EnvRunner:
         
         #Compute returns
         last_value = value_net(
-            torch.tensor(np.expand_dims(state, axis=0), dtype=torch.float32, device=self.device)
-        ).cpu().numpy()
+            torch.as_tensor(state, dtype=torch.float32, device=self.device).unsqueeze(0)
+        ).cpu().numpy()[0]
 
         mb_returns = self.compute_discounted_return(self.mb_rewards[:episode_len], last_value)
         '''

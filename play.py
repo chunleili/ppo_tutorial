@@ -1,15 +1,12 @@
 import os
-import gym
+import gymnasium as gym
 import torch
-import torch.nn as nn
 import numpy as np
-from envrunner import EnvRunner
-from model import PolicyNet, ValueNet
-from agent import PPO
+from model import PolicyNet
 
 if __name__ == '__main__':
     #Create the environment
-    env = gym.make('BipedalWalker-v3')
+    env = gym.make('BipedalWalker-v3', render_mode='human')
     s_dim = env.observation_space.shape[0]
     a_dim = env.action_space.shape[0]
 
@@ -19,28 +16,39 @@ if __name__ == '__main__':
 
     #Load the models
     save_dir = './save'
+    best_model_path = os.path.join(save_dir, "best_model.pt")
     model_path = os.path.join(save_dir, "model.pt")
 
-    if os.path.exists(model_path):
-        print("Loading the model ... ", end="")
-        checkpoint = torch.load(model_path)
-        policy_net.load_state_dict(checkpoint["PolicyNet"])
-        print("Done.")
-    else:
+    checkpoint_path = best_model_path
+
+    if checkpoint_path is None:
         print('ERROR: No model saved')
         exit(1)
 
+    print(f"Loading the model from {checkpoint_path} ... ", end="")
+    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    policy_net.load_state_dict(checkpoint["PolicyNet"])
+    print("Done.")
+
     #Run an episode using the policy net
     with torch.no_grad():
-        state = env.reset()
+        reset_out = env.reset()
+        state = reset_out[0] if isinstance(reset_out, tuple) else reset_out
         total_reward = 0
         length = 0
 
         while True:
             env.render()
-            state_tensor = torch.tensor(np.expand_dims(state, axis=0), dtype=torch.float32, device='cpu')
+            state_tensor = torch.as_tensor(state, dtype=torch.float32).unsqueeze(0)
             action = policy_net.choose_action(state_tensor, deterministic=True).cpu().numpy()
-            state, reward, done, info = env.step(action[0])
+            step_out = env.step(action[0])
+
+            if len(step_out) == 5:
+                state, reward, terminated, truncated, info = step_out
+                done = terminated or truncated
+            else:
+                state, reward, done, info = step_out
+
             total_reward += reward
             length += 1
 

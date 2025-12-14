@@ -1,18 +1,19 @@
 import os
-import gym
+import gymnasium as gym
 import torch
 import torch.nn as nn
 import numpy as np
 from envrunner import EnvRunner
 from model import PolicyNet, ValueNet
 from agent import PPO
+from torch.utils.tensorboard import SummaryWriter
 
 #Run an episode using the policy net
 def play(policy_net):
     render_env = gym.make('BipedalWalker-v3')
 
     with torch.no_grad():
-        state = render_env.reset()
+        state, _ = render_env.reset()
         total_reward = 0
         length = 0
 
@@ -20,7 +21,7 @@ def play(policy_net):
             render_env.render()
             state_tensor = torch.tensor(np.expand_dims(state, axis=0), dtype=torch.float32, device='cpu')
             action = policy_net.choose_action(state_tensor, deterministic=True).cpu().numpy()
-            state, reward, done, info = render_env.step(action[0])
+            state, reward, done, truncated, info = render_env.step(action[0])
             total_reward += reward
             length += 1
 
@@ -34,10 +35,13 @@ def play(policy_net):
 def train(env, runner, policy_net, value_net, agent, max_episode=5000):
     mean_total_reward = 0
     mean_length = 0
+    best_return = -np.inf
     save_dir = './save'
 
     if not os.path.exists(save_dir):
         os.mkdir(save_dir)
+
+    writer = SummaryWriter(log_dir=os.path.join(save_dir, "logs"))
 
     for i in range(max_episode):
         #Run and episode to collect data
@@ -48,9 +52,21 @@ def train(env, runner, policy_net, value_net, agent, max_episode=5000):
         
         #Train the model using the collected data
         pg_loss, v_loss, ent = agent.train(mb_states, mb_actions, mb_values, mb_advs, mb_returns, mb_old_a_logps)
-        mean_total_reward += mb_rewards.sum()
+        total_reward = mb_rewards.sum()
+        mean_total_reward += total_reward
         mean_length += len(mb_states)
-        print("[Episode {:4d}] total reward = {:.6f}, length = {:d}".format(i, mb_rewards.sum(), len(mb_states)))
+        writer.add_scalar("reward/total", total_reward, i)
+        print("[Episode {:4d}] total reward = {:.6f}, length = {:d}".format(i, total_reward, len(mb_states)))
+
+        #Save best model on improved return
+        if total_reward > best_return:
+            best_return = total_reward
+            torch.save({
+                "it": i,
+                "best_return": best_return,
+                "PolicyNet": policy_net.state_dict(),
+                "ValueNet": value_net.state_dict()
+            }, os.path.join(save_dir, "best_model.pt"))
 
         #Show the current result & save the model
         if i % 200 == 0:
@@ -69,9 +85,11 @@ def train(env, runner, policy_net, value_net, agent, max_episode=5000):
             }, os.path.join(save_dir, "model.pt"))
             print("Done.")
             print()
-            play(policy_net)
+            # play(policy_net)
             mean_total_reward = 0
             mean_length = 0
+
+    writer.close()
 
 if __name__ == '__main__':
     #Create the environment
